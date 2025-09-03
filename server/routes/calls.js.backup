@@ -1,0 +1,882 @@
+const express = require('express');
+const { Call, User, CallRecording } = require('../models');
+const auth = require('../middleware/auth');
+const { client: twilioClient } = require('../config/twilio');
+
+const router = express.Router();
+
+// Comprehensive global rates based on Twilio's pricing with profit margins
+const getGlobalRates = () => {
+  return {
+    // North America
+    'US': { 
+      mobile: 0.020, landline: 0.015, currency: 'USD', 
+      name: 'United States', flag: '🇺🇸', region: 'North America' 
+    },
+    'CA': { 
+      mobile: 0.020, landline: 0.015, currency: 'USD', 
+      name: 'Canada', flag: '🇨🇦', region: 'North America' 
+    },
+    'MX': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Mexico', flag: '🇲🇽', region: 'North America' 
+    },
+    'GT': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Guatemala', flag: '🇬🇹', region: 'North America' 
+    },
+    'BZ': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Belize', flag: '🇧🇿', region: 'North America' 
+    },
+    'SV': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'El Salvador', flag: '🇸🇻', region: 'North America' 
+    },
+    'HN': { 
+      mobile: 0.200, landline: 0.170, currency: 'USD', 
+      name: 'Honduras', flag: '🇭🇳', region: 'North America' 
+    },
+    'NI': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Nicaragua', flag: '🇳🇮', region: 'North America' 
+    },
+    'CR': { 
+      mobile: 0.140, landline: 0.110, currency: 'USD', 
+      name: 'Costa Rica', flag: '🇨🇷', region: 'North America' 
+    },
+    'PA': { 
+      mobile: 0.120, landline: 0.100, currency: 'USD', 
+      name: 'Panama', flag: '🇵🇦', region: 'North America' 
+    },
+    'DO': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Dominican Republic', flag: '🇩🇴', region: 'North America' 
+    },
+    'HT': { 
+      mobile: 0.350, landline: 0.280, currency: 'USD', 
+      name: 'Haiti', flag: '🇭🇹', region: 'North America' 
+    },
+    'JM': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Jamaica', flag: '🇯🇲', region: 'North America' 
+    },
+    'CU': { 
+      mobile: 0.950, landline: 0.850, currency: 'USD', 
+      name: 'Cuba', flag: '🇨🇺', region: 'North America' 
+    },
+
+    // South America
+    'BR': { 
+      mobile: 0.110, landline: 0.085, currency: 'USD', 
+      name: 'Brazil', flag: '🇧🇷', region: 'South America' 
+    },
+    'AR': { 
+      mobile: 0.090, landline: 0.070, currency: 'USD', 
+      name: 'Argentina', flag: '🇦🇷', region: 'South America' 
+    },
+    'CL': { 
+      mobile: 0.080, landline: 0.065, currency: 'USD', 
+      name: 'Chile', flag: '🇨🇱', region: 'South America' 
+    },
+    'CO': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Colombia', flag: '🇨🇴', region: 'South America' 
+    },
+    'PE': { 
+      mobile: 0.085, landline: 0.065, currency: 'USD', 
+      name: 'Peru', flag: '🇵🇪', region: 'South America' 
+    },
+    'VE': { 
+      mobile: 0.150, landline: 0.120, currency: 'USD', 
+      name: 'Venezuela', flag: '🇻🇪', region: 'South America' 
+    },
+    'EC': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Ecuador', flag: '🇪🇨', region: 'South America' 
+    },
+    'BO': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Bolivia', flag: '🇧🇴', region: 'South America' 
+    },
+    'PY': { 
+      mobile: 0.120, landline: 0.095, currency: 'USD', 
+      name: 'Paraguay', flag: '🇵🇾', region: 'South America' 
+    },
+    'UY': { 
+      mobile: 0.140, landline: 0.110, currency: 'USD', 
+      name: 'Uruguay', flag: '🇺🇾', region: 'South America' 
+    },
+    'GY': { 
+      mobile: 0.350, landline: 0.280, currency: 'USD', 
+      name: 'Guyana', flag: '🇬🇾', region: 'South America' 
+    },
+    'SR': { 
+      mobile: 0.380, landline: 0.300, currency: 'USD', 
+      name: 'Suriname', flag: '🇸🇷', region: 'South America' 
+    },
+
+    // Europe
+    'GB': { 
+      mobile: 0.042, landline: 0.032, currency: 'USD', 
+      name: 'United Kingdom', flag: '🇬🇧', region: 'Europe' 
+    },
+    'DE': { 
+      mobile: 0.038, landline: 0.028, currency: 'USD', 
+      name: 'Germany', flag: '🇩🇪', region: 'Europe' 
+    },
+    'FR': { 
+      mobile: 0.040, landline: 0.030, currency: 'USD', 
+      name: 'France', flag: '🇫🇷', region: 'Europe' 
+    },
+    'IT': { 
+      mobile: 0.045, landline: 0.035, currency: 'USD', 
+      name: 'Italy', flag: '🇮🇹', region: 'Europe' 
+    },
+    'ES': { 
+      mobile: 0.042, landline: 0.032, currency: 'USD', 
+      name: 'Spain', flag: '🇪🇸', region: 'Europe' 
+    },
+    'NL': { 
+      mobile: 0.038, landline: 0.028, currency: 'USD', 
+      name: 'Netherlands', flag: '🇳🇱', region: 'Europe' 
+    },
+    'BE': { 
+      mobile: 0.040, landline: 0.030, currency: 'USD', 
+      name: 'Belgium', flag: '🇧🇪', region: 'Europe' 
+    },
+    'CH': { 
+      mobile: 0.035, landline: 0.025, currency: 'USD', 
+      name: 'Switzerland', flag: '🇨🇭', region: 'Europe' 
+    },
+    'AT': { 
+      mobile: 0.042, landline: 0.032, currency: 'USD', 
+      name: 'Austria', flag: '🇦🇹', region: 'Europe' 
+    },
+    'SE': { 
+      mobile: 0.035, landline: 0.025, currency: 'USD', 
+      name: 'Sweden', flag: '🇸🇪', region: 'Europe' 
+    },
+    'NO': { 
+      mobile: 0.038, landline: 0.028, currency: 'USD', 
+      name: 'Norway', flag: '🇳🇴', region: 'Europe' 
+    },
+    'DK': { 
+      mobile: 0.035, landline: 0.025, currency: 'USD', 
+      name: 'Denmark', flag: '🇩🇰', region: 'Europe' 
+    },
+    'FI': { 
+      mobile: 0.038, landline: 0.028, currency: 'USD', 
+      name: 'Finland', flag: '🇫🇮', region: 'Europe' 
+    },
+    'PL': { 
+      mobile: 0.055, landline: 0.045, currency: 'USD', 
+      name: 'Poland', flag: '🇵🇱', region: 'Europe' 
+    },
+    'CZ': { 
+      mobile: 0.050, landline: 0.040, currency: 'USD', 
+      name: 'Czech Republic', flag: '🇨🇿', region: 'Europe' 
+    },
+    'HU': { 
+      mobile: 0.055, landline: 0.045, currency: 'USD', 
+      name: 'Hungary', flag: '🇭🇺', region: 'Europe' 
+    },
+    'SK': { 
+      mobile: 0.052, landline: 0.042, currency: 'USD', 
+      name: 'Slovakia', flag: '🇸🇰', region: 'Europe' 
+    },
+    'SI': { 
+      mobile: 0.050, landline: 0.040, currency: 'USD', 
+      name: 'Slovenia', flag: '🇸🇮', region: 'Europe' 
+    },
+    'HR': { 
+      mobile: 0.058, landline: 0.048, currency: 'USD', 
+      name: 'Croatia', flag: '🇭🇷', region: 'Europe' 
+    },
+    'RS': { 
+      mobile: 0.095, landline: 0.075, currency: 'USD', 
+      name: 'Serbia', flag: '🇷🇸', region: 'Europe' 
+    },
+    'BG': { 
+      mobile: 0.085, landline: 0.065, currency: 'USD', 
+      name: 'Bulgaria', flag: '🇧🇬', region: 'Europe' 
+    },
+    'RO': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Romania', flag: '🇷🇴', region: 'Europe' 
+    },
+    'GR': { 
+      mobile: 0.068, landline: 0.052, currency: 'USD', 
+      name: 'Greece', flag: '🇬🇷', region: 'Europe' 
+    },
+    'PT': { 
+      mobile: 0.048, landline: 0.038, currency: 'USD', 
+      name: 'Portugal', flag: '🇵🇹', region: 'Europe' 
+    },
+    'IE': { 
+      mobile: 0.042, landline: 0.032, currency: 'USD', 
+      name: 'Ireland', flag: '🇮🇪', region: 'Europe' 
+    },
+    'LU': { 
+      mobile: 0.045, landline: 0.035, currency: 'USD', 
+      name: 'Luxembourg', flag: '🇱🇺', region: 'Europe' 
+    },
+    'IS': { 
+      mobile: 0.048, landline: 0.038, currency: 'USD', 
+      name: 'Iceland', flag: '🇮🇸', region: 'Europe' 
+    },
+    'MT': { 
+      mobile: 0.055, landline: 0.045, currency: 'USD', 
+      name: 'Malta', flag: '🇲🇹', region: 'Europe' 
+    },
+    'CY': { 
+      mobile: 0.058, landline: 0.048, currency: 'USD', 
+      name: 'Cyprus', flag: '🇨🇾', region: 'Europe' 
+    },
+    'EE': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Estonia', flag: '🇪🇪', region: 'Europe' 
+    },
+    'LV': { 
+      mobile: 0.068, landline: 0.052, currency: 'USD', 
+      name: 'Latvia', flag: '🇱🇻', region: 'Europe' 
+    },
+    'LT': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Lithuania', flag: '🇱🇹', region: 'Europe' 
+    },
+    'RU': { 
+      mobile: 0.110, landline: 0.085, currency: 'USD', 
+      name: 'Russia', flag: '🇷🇺', region: 'Europe' 
+    },
+    'UA': { 
+      mobile: 0.150, landline: 0.120, currency: 'USD', 
+      name: 'Ukraine', flag: '🇺🇦', region: 'Europe' 
+    },
+    'BY': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Belarus', flag: '🇧🇾', region: 'Europe' 
+    },
+    'MD': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Moldova', flag: '🇲🇩', region: 'Europe' 
+    },
+    'TR': { 
+      mobile: 0.078, landline: 0.060, currency: 'USD', 
+      name: 'Turkey', flag: '🇹🇷', region: 'Europe' 
+    },
+
+    // Asia Pacific
+    'JP': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'Japan', flag: '🇯🇵', region: 'Asia Pacific' 
+    },
+    'CN': { 
+      mobile: 0.078, landline: 0.060, currency: 'USD', 
+      name: 'China', flag: '🇨🇳', region: 'Asia Pacific' 
+    },
+    'KR': { 
+      mobile: 0.052, landline: 0.040, currency: 'USD', 
+      name: 'South Korea', flag: '🇰🇷', region: 'Asia Pacific' 
+    },
+    'SG': { 
+      mobile: 0.052, landline: 0.040, currency: 'USD', 
+      name: 'Singapore', flag: '🇸🇬', region: 'Asia Pacific' 
+    },
+    'HK': { 
+      mobile: 0.048, landline: 0.038, currency: 'USD', 
+      name: 'Hong Kong', flag: '🇭🇰', region: 'Asia Pacific' 
+    },
+    'TW': { 
+      mobile: 0.058, landline: 0.045, currency: 'USD', 
+      name: 'Taiwan', flag: '🇹🇼', region: 'Asia Pacific' 
+    },
+    'MY': { 
+      mobile: 0.078, landline: 0.060, currency: 'USD', 
+      name: 'Malaysia', flag: '🇲🇾', region: 'Asia Pacific' 
+    },
+    'TH': { 
+      mobile: 0.095, landline: 0.075, currency: 'USD', 
+      name: 'Thailand', flag: '🇹🇭', region: 'Asia Pacific' 
+    },
+    'PH': { 
+      mobile: 0.130, landline: 0.110, currency: 'USD', 
+      name: 'Philippines', flag: '🇵🇭', region: 'Asia Pacific' 
+    },
+    'ID': { 
+      mobile: 0.155, landline: 0.125, currency: 'USD', 
+      name: 'Indonesia', flag: '🇮🇩', region: 'Asia Pacific' 
+    },
+    'VN': { 
+      mobile: 0.118, landline: 0.095, currency: 'USD', 
+      name: 'Vietnam', flag: '🇻🇳', region: 'Asia Pacific' 
+    },
+    'IN': { 
+      mobile: 0.104, landline: 0.080, currency: 'USD', 
+      name: 'India', flag: '🇮🇳', region: 'Asia Pacific' 
+    },
+    'PK': { 
+      mobile: 0.130, landline: 0.105, currency: 'USD', 
+      name: 'Pakistan', flag: '🇵🇰', region: 'Asia Pacific' 
+    },
+    'BD': { 
+      mobile: 0.078, landline: 0.065, currency: 'USD', 
+      name: 'Bangladesh', flag: '🇧🇩', region: 'Asia Pacific' 
+    },
+    'LK': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Sri Lanka', flag: '🇱🇰', region: 'Asia Pacific' 
+    },
+    'NP': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Nepal', flag: '🇳🇵', region: 'Asia Pacific' 
+    },
+    'MM': { 
+      mobile: 0.350, landline: 0.280, currency: 'USD', 
+      name: 'Myanmar', flag: '🇲🇲', region: 'Asia Pacific' 
+    },
+    'KH': { 
+      mobile: 0.120, landline: 0.095, currency: 'USD', 
+      name: 'Cambodia', flag: '🇰🇭', region: 'Asia Pacific' 
+    },
+    'LA': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Laos', flag: '🇱🇦', region: 'Asia Pacific' 
+    },
+    'MN': { 
+      mobile: 0.085, landline: 0.068, currency: 'USD', 
+      name: 'Mongolia', flag: '🇲🇳', region: 'Asia Pacific' 
+    },
+    'BT': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Bhutan', flag: '🇧🇹', region: 'Asia Pacific' 
+    },
+    'AU': { 
+      mobile: 0.052, landline: 0.040, currency: 'USD', 
+      name: 'Australia', flag: '🇦🇺', region: 'Asia Pacific' 
+    },
+    'NZ': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'New Zealand', flag: '🇳🇿', region: 'Asia Pacific' 
+    },
+    'FJ': { 
+      mobile: 0.450, landline: 0.380, currency: 'USD', 
+      name: 'Fiji', flag: '🇫🇯', region: 'Asia Pacific' 
+    },
+    'PG': { 
+      mobile: 0.950, landline: 0.780, currency: 'USD', 
+      name: 'Papua New Guinea', flag: '🇵🇬', region: 'Asia Pacific' 
+    },
+
+    // Middle East
+    'IL': { 
+      mobile: 0.052, landline: 0.040, currency: 'USD', 
+      name: 'Israel', flag: '🇮🇱', region: 'Middle East' 
+    },
+    'AE': { 
+      mobile: 0.065, landline: 0.050, currency: 'USD', 
+      name: 'United Arab Emirates', flag: '🇦🇪', region: 'Middle East' 
+    },
+    'SA': { 
+      mobile: 0.078, landline: 0.060, currency: 'USD', 
+      name: 'Saudi Arabia', flag: '🇸🇦', region: 'Middle East' 
+    },
+    'QA': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Qatar', flag: '🇶🇦', region: 'Middle East' 
+    },
+    'KW': { 
+      mobile: 0.120, landline: 0.095, currency: 'USD', 
+      name: 'Kuwait', flag: '🇰🇼', region: 'Middle East' 
+    },
+    'BH': { 
+      mobile: 0.140, landline: 0.110, currency: 'USD', 
+      name: 'Bahrain', flag: '🇧🇭', region: 'Middle East' 
+    },
+    'OM': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Oman', flag: '🇴🇲', region: 'Middle East' 
+    },
+    'JO': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Jordan', flag: '🇯🇴', region: 'Middle East' 
+    },
+    'LB': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Lebanon', flag: '🇱🇧', region: 'Middle East' 
+    },
+    'SY': { 
+      mobile: 0.450, landline: 0.380, currency: 'USD', 
+      name: 'Syria', flag: '🇸🇾', region: 'Middle East' 
+    },
+    'IQ': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Iraq', flag: '🇮🇶', region: 'Middle East' 
+    },
+    'IR': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Iran', flag: '🇮🇷', region: 'Middle East' 
+    },
+    'AF': { 
+      mobile: 0.320, landline: 0.260, currency: 'USD', 
+      name: 'Afghanistan', flag: '🇦🇫', region: 'Middle East' 
+    },
+    'YE': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Yemen', flag: '🇾🇪', region: 'Middle East' 
+    },
+
+    // Africa
+    'ZA': { 
+      mobile: 0.104, landline: 0.080, currency: 'USD', 
+      name: 'South Africa', flag: '🇿🇦', region: 'Africa' 
+    },
+    'EG': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Egypt', flag: '🇪🇬', region: 'Africa' 
+    },
+    'NG': { 
+      mobile: 0.215, landline: 0.175, currency: 'USD', 
+      name: 'Nigeria', flag: '🇳🇬', region: 'Africa' 
+    },
+    'KE': { 
+      mobile: 0.182, landline: 0.150, currency: 'USD', 
+      name: 'Kenya', flag: '🇰🇪', region: 'Africa' 
+    },
+    'GH': { 
+      mobile: 0.195, landline: 0.155, currency: 'USD', 
+      name: 'Ghana', flag: '🇬🇭', region: 'Africa' 
+    },
+    'UG': { 
+      mobile: 0.320, landline: 0.260, currency: 'USD', 
+      name: 'Uganda', flag: '🇺🇬', region: 'Africa' 
+    },
+    'TZ': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Tanzania', flag: '🇹🇿', region: 'Africa' 
+    },
+    'RW': { 
+      mobile: 0.420, landline: 0.350, currency: 'USD', 
+      name: 'Rwanda', flag: '🇷🇼', region: 'Africa' 
+    },
+    'ET': { 
+      mobile: 0.350, landline: 0.280, currency: 'USD', 
+      name: 'Ethiopia', flag: '🇪🇹', region: 'Africa' 
+    },
+    'MA': { 
+      mobile: 0.650, landline: 0.520, currency: 'USD', 
+      name: 'Morocco', flag: '🇲🇦', region: 'Africa' 
+    },
+    'TN': { 
+      mobile: 0.780, landline: 0.620, currency: 'USD', 
+      name: 'Tunisia', flag: '🇹🇳', region: 'Africa' 
+    },
+    'DZ': { 
+      mobile: 0.580, landline: 0.480, currency: 'USD', 
+      name: 'Algeria', flag: '🇩🇿', region: 'Africa' 
+    },
+    'LY': { 
+      mobile: 0.450, landline: 0.380, currency: 'USD', 
+      name: 'Libya', flag: '🇱🇾', region: 'Africa' 
+    },
+    'SD': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Sudan', flag: '🇸🇩', region: 'Africa' 
+    },
+    'ZW': { 
+      mobile: 0.520, landline: 0.420, currency: 'USD', 
+      name: 'Zimbabwe', flag: '🇿🇼', region: 'Africa' 
+    },
+    'ZM': { 
+      mobile: 0.420, landline: 0.350, currency: 'USD', 
+      name: 'Zambia', flag: '🇿🇲', region: 'Africa' 
+    },
+    'MW': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Malawi', flag: '🇲🇼', region: 'Africa' 
+    },
+    'MZ': { 
+      mobile: 0.320, landline: 0.260, currency: 'USD', 
+      name: 'Mozambique', flag: '🇲🇿', region: 'Africa' 
+    },
+    'BW': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Botswana', flag: '🇧🇼', region: 'Africa' 
+    },
+    'NA': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Namibia', flag: '🇳🇦', region: 'Africa' 
+    },
+    'SZ': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Eswatini', flag: '🇸🇿', region: 'Africa' 
+    },
+    'LS': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Lesotho', flag: '🇱🇸', region: 'Africa' 
+    },
+    'MG': { 
+      mobile: 0.950, landline: 0.780, currency: 'USD', 
+      name: 'Madagascar', flag: '🇲🇬', region: 'Africa' 
+    },
+    'MU': { 
+      mobile: 0.180, landline: 0.150, currency: 'USD', 
+      name: 'Mauritius', flag: '🇲🇺', region: 'Africa' 
+    },
+    'SC': { 
+      mobile: 0.650, landline: 0.520, currency: 'USD', 
+      name: 'Seychelles', flag: '🇸🇨', region: 'Africa' 
+    },
+    'SN': { 
+      mobile: 0.520, landline: 0.420, currency: 'USD', 
+      name: 'Senegal', flag: '🇸🇳', region: 'Africa' 
+    },
+    'CI': { 
+      mobile: 0.320, landline: 0.260, currency: 'USD', 
+      name: 'Ivory Coast', flag: '🇨🇮', region: 'Africa' 
+    },
+    'ML': { 
+      mobile: 0.420, landline: 0.350, currency: 'USD', 
+      name: 'Mali', flag: '🇲🇱', region: 'Africa' 
+    },
+    'BF': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Burkina Faso', flag: '🇧🇫', region: 'Africa' 
+    },
+    'NE': { 
+      mobile: 0.520, landline: 0.420, currency: 'USD', 
+      name: 'Niger', flag: '🇳🇪', region: 'Africa' 
+    },
+    'TD': { 
+      mobile: 0.650, landline: 0.520, currency: 'USD', 
+      name: 'Chad', flag: '🇹🇩', region: 'Africa' 
+    },
+    'CM': { 
+      mobile: 0.280, landline: 0.220, currency: 'USD', 
+      name: 'Cameroon', flag: '🇨🇲', region: 'Africa' 
+    },
+    'GA': { 
+      mobile: 0.380, landline: 0.320, currency: 'USD', 
+      name: 'Gabon', flag: '🇬🇦', region: 'Africa' 
+    },
+    'CG': { 
+      mobile: 0.420, landline: 0.350, currency: 'USD', 
+      name: 'Republic of the Congo', flag: '🇨🇬', region: 'Africa' 
+    },
+    'CD': { 
+      mobile: 0.520, landline: 0.420, currency: 'USD', 
+      name: 'Democratic Republic of the Congo', flag: '🇨🇩', region: 'Africa' 
+    },
+    'CF': { 
+      mobile: 0.650, landline: 0.520, currency: 'USD', 
+      name: 'Central African Republic', flag: '🇨🇫', region: 'Africa' 
+    },
+    'AO': { 
+      mobile: 0.220, landline: 0.180, currency: 'USD', 
+      name: 'Angola', flag: '🇦🇴', region: 'Africa' 
+    }
+  };
+};
+
+// Get call rates for different countries
+router.get('/rates', async (req, res) => {
+  try {
+    const rates = getGlobalRates();
+    res.json(rates);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Initiate a call
+router.post('/initiate', auth, async (req, res) => {
+  try {
+    const { to, from } = req.body;
+    const user = await User.findByPk(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Check if user has sufficient balance (minimum $1)
+    if (user.balance < 1) {
+      return res.status(400).json({ 
+        message: 'Insufficient balance. Please add credits.' 
+      });
+    }
+
+    // Create a new call record
+    const call = await Call.create({
+      userId: req.user.userId,
+      callSid: `CA${Date.now()}${Math.random().toString(36).substr(2, 9)}`, // 临时生成
+      fromNumber: from || '+1234567890',
+      toNumber: to,
+      direction: 'outbound',
+      status: 'initiated',
+      rate: 0.02,
+      startTime: new Date()
+    });
+
+    // In a real implementation, you would integrate with Twilio or other VoIP service
+    // For demo purposes, we'll simulate the call initiation
+    res.json({
+      success: true,
+      callId: call.id,
+      message: 'Call initiated successfully',
+      estimatedRate: 0.02 // USD per minute
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// End a call
+router.post('/end/:callId', auth, async (req, res) => {
+  try {
+    const call = await Call.findByPk(req.params.callId);
+    
+    if (!call || call.userId !== req.user.userId) {
+      return res.status(404).json({ message: 'Call not found' });
+    }
+
+    const endTime = new Date();
+    const duration = Math.ceil((endTime - call.startTime) / 1000); // seconds
+    const cost = (duration / 60) * 0.02; // $0.02 per minute
+
+    await call.update({
+      endTime: endTime,
+      duration: duration,
+      cost: cost,
+      status: 'completed'
+    });
+
+    // Deduct cost from user balance
+    const user = await User.findByPk(req.user.userId);
+    await user.update({
+      balance: Math.max(0, parseFloat(user.balance) - cost)
+    });
+
+    res.json({
+      success: true,
+      duration: duration,
+      cost: cost,
+      remainingBalance: user.balance
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get call history
+router.get('/history', auth, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const { count: total, rows: calls } = await Call.findAndCountAll({
+      where: { userId: req.user.userId },
+      order: [['startTime', 'DESC']],
+      offset: offset,
+      limit: limit,
+      include: [
+        {
+          model: CallRecording,
+          as: 'recording',
+          required: false
+        }
+      ]
+    });
+
+    res.json({
+      calls,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// 费率计算器 - 计算通话费用（支持移动和固话费率）
+router.post('/calculate', async (req, res) => {
+  try {
+    const { country, duration, unit = 'minutes', callType = 'mobile' } = req.body;
+    
+    if (!country || !duration) {
+      return res.status(400).json({ 
+        message: 'Country and duration are required' 
+      });
+    }
+
+    // 获取费率数据
+    const rates = getGlobalRates();
+
+    const countryRate = rates[country.toUpperCase()];
+    if (!countryRate) {
+      return res.status(404).json({ 
+        message: 'Country not found' 
+      });
+    }
+
+    // 根据通话类型获取相应费率
+    const rate = callType === 'landline' ? countryRate.landline : countryRate.mobile;
+
+    // 转换时长为分钟
+    let durationInMinutes = parseFloat(duration);
+    if (unit === 'seconds') {
+      durationInMinutes = durationInMinutes / 60;
+    } else if (unit === 'hours') {
+      durationInMinutes = durationInMinutes * 60;
+    }
+
+    // 计算费用（向上取整到分钟）
+    const roundedMinutes = Math.ceil(durationInMinutes);
+    const totalCost = roundedMinutes * rate;
+
+    // 计算节省（如果选择固话）
+    const mobileRate = countryRate.mobile;
+    const landlineRate = countryRate.landline;
+    const savingsPercent = ((mobileRate - landlineRate) / mobileRate * 100).toFixed(1);
+    const savingsAmount = roundedMinutes * (mobileRate - landlineRate);
+
+    // 计算各种统计信息
+    const costBreakdown = {
+      country: countryRate.name,
+      flag: countryRate.flag,
+      region: countryRate.region,
+      callType: callType,
+      rates: {
+        mobile: mobileRate,
+        landline: landlineRate,
+        current: rate
+      },
+      currency: countryRate.currency,
+      duration: {
+        input: duration,
+        unit: unit,
+        minutes: durationInMinutes,
+        billableMinutes: roundedMinutes
+      },
+      cost: {
+        total: parseFloat(totalCost.toFixed(4)),
+        perMinute: rate,
+        formatted: `$${totalCost.toFixed(4)}`
+      },
+      savings: {
+        percent: savingsPercent,
+        amount: parseFloat(savingsAmount.toFixed(4)),
+        formatted: `$${savingsAmount.toFixed(4)}`,
+        applicable: callType === 'landline' && mobileRate > landlineRate
+      },
+      comparison: {
+        // 与最便宜国家比较
+        cheapest: rates['US'].mobile,
+        difference: `${(((rate - rates['US'].mobile) / rates['US'].mobile) * 100).toFixed(1)}%`,
+        // 与最贵国家比较  
+        expensive: Math.max(...Object.values(rates).map(r => r.mobile)),
+        discount: `${(((Math.max(...Object.values(rates).map(r => r.mobile)) - rate) / Math.max(...Object.values(rates).map(r => r.mobile)) * 100).toFixed(1)}%`
+      }
+    };
+
+    res.json({
+      success: true,
+      calculation: costBreakdown
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// 费率比较器 - 比较多个国家费率（支持移动和固话费率）
+router.post('/compare', async (req, res) => {
+  try {
+    const { countries, duration = 10, callType = 'mobile' } = req.body; // 默认10分钟
+
+    if (!countries || !Array.isArray(countries) || countries.length === 0) {
+      return res.status(400).json({ 
+        message: 'Countries array is required' 
+      });
+    }
+
+    // 获取费率数据
+    const rates = getGlobalRates();
+
+    const comparisons = [];
+    
+    for (const country of countries) {
+      const countryRate = rates[country.toUpperCase()];
+      if (countryRate) {
+        const rate = callType === 'landline' ? countryRate.landline : countryRate.mobile;
+        const cost = duration * rate;
+        const mobileRate = countryRate.mobile;
+        const landlineRate = countryRate.landline;
+        const savingsPercent = ((mobileRate - landlineRate) / mobileRate * 100).toFixed(1);
+        
+        comparisons.push({
+          country: country.toUpperCase(),
+          name: countryRate.name,
+          flag: countryRate.flag,
+          region: countryRate.region,
+          callType: callType,
+          rates: {
+            mobile: mobileRate,
+            landline: landlineRate,
+            current: rate
+          },
+          cost: parseFloat(cost.toFixed(4)),
+          formatted: `$${cost.toFixed(4)}`,
+          savings: {
+            percent: savingsPercent,
+            amount: parseFloat((duration * (mobileRate - landlineRate)).toFixed(4)),
+            applicable: mobileRate > landlineRate
+          }
+        });
+      }
+    }
+
+    // 按费用排序
+    comparisons.sort((a, b) => a.cost - b.cost);
+
+    // 计算统计信息
+    const costs = comparisons.map(c => c.cost);
+    const stats = {
+      cheapest: Math.min(...costs),
+      expensive: Math.max(...costs),
+      average: costs.reduce((a, b) => a + b, 0) / costs.length,
+      duration: duration,
+      callType: callType,
+      totalCountries: comparisons.length
+    };
+
+    res.json({
+      success: true,
+      comparisons,
+      stats: {
+        ...stats,
+        average: parseFloat(stats.average.toFixed(4)),
+        cheapest: parseFloat(stats.cheapest.toFixed(4)),
+        expensive: parseFloat(stats.expensive.toFixed(4))
+      }
+    });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router; 

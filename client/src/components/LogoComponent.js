@@ -1,0 +1,57 @@
+import React from 'react';
+
+const LogoComponent = ({ size = "32px", className = "" }) => {
+  return (
+    <div style={{ width: size, height: size }} className={className}>
+      <svg 
+        width={size} 
+        height={size} 
+        viewBox="0 0 100 100" 
+        fill="none" 
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        {/* 黄色背景 */}
+        <rect 
+          width="100" 
+          height="100" 
+          rx="22" 
+          ry="22" 
+          fill="#FFC900"
+        />
+        
+        {/* 深蓝色电话图标 */}
+        <path 
+          d="M25 35C25 30.5817 28.5817 27 33 27H42C46.4183 27 50 30.5817 50 35V40C50 44.4183 46.4183 48 42 48H40L35 53V48H33C28.5817 48 25 44.4183 25 40V35Z"
+          fill="#1E1B4B"
+          stroke="#1E1B4B"
+          strokeWidth="2"
+        />
+        
+        {/* 电话听筒顶部 */}
+        <rect 
+          x="35" 
+          y="20" 
+          width="10" 
+          height="8" 
+          rx="4" 
+          fill="#1E1B4B"
+        />
+        
+        {/* 连接线 */}
+        <path 
+          d="M40 28V27"
+          stroke="#1E1B4B"
+          strokeWidth="3"
+          strokeLinecap="round"
+        />
+        
+        {/* 装饰性信号波 */}
+        <circle cx="65" cy="40" r="2" fill="#1E1B4B" fillOpacity="0.6"/>
+        <circle cx="70" cy="35" r="1.5" fill="#1E1B4B" fillOpacity="0.4"/>
+        <circle cx="75" cy="45" r="1" fill="#1E1B4B" fillOpacity="0.3"/>
+      </svg>
+    </div>
+  );
+};
+
+export default LogoComponent;

@@ -1,0 +1,646 @@
+const express = require('express');
+const { UserPhoneNumber, User, IncomingCall } = require('../models');
+const auth = require('../middleware/auth');
+const { client: twilioClient } = require('../config/twilio');
+const { getPhoneNumberLocation } = require('../utils/phoneLocation');
+
+const router = express.Router();
+
+// 获取用户的电话号码列表
+router.get('/', auth, async (req, res) => {
+  try {
+    // 获取用户的默认来电显示设置
+    const user = await User.findByPk(req.user.userId, {
+      attributes: ['defaultCallerId']
+    });
+
+    const phoneNumbers = await UserPhoneNumber.findAll({
+      where: { userId: req.user.userId },
+      order: [['createdAt', 'DESC']],
+      include: [
+        {
+          model: IncomingCall,
+          as: 'incomingCalls',
+          attributes: ['id', 'status', 'startTime'],
+          limit: 5,
+          order: [['startTime', 'DESC']],
+          required: false
+        }
+      ]
+    });
+
+    // 格式化响应数据
+    const formattedNumbers = phoneNumbers.map(phone => ({
+      id: phone.id,
+      phoneNumber: phone.phoneNumber,
+      type: phone.type,
+      status: phone.status,
+      callerIdName: phone.callerIdName,
+      monthlyFee: parseFloat(phone.monthlyFee),
+      setupFee: parseFloat(phone.setupFee),
+      purchaseDate: phone.purchaseDate,
+      expiryDate: phone.expiryDate,
+      capabilities: phone.capabilities,
+      // 地理位置信息
+      locality: phone.locality,
+      region: phone.region,
+      isoCountry: phone.isoCountry,
+      // 新增：布尔字段显示是否为默认来电显示
+      isDefaultCallerId: phone.isDefaultCallerId || false,
+      settings: {
+        forwardingEnabled: phone.forwardingEnabled,
+        forwardingNumber: phone.forwardingNumber,
+        voicemailEnabled: phone.voicemailEnabled,
+        autoAnswer: phone.autoAnswer,
+        businessHours: phone.businessHours,
+        customGreeting: phone.customGreeting
+      },
+      statistics: {
+        totalIncomingCalls: phone.totalIncomingCalls,
+        totalIncomingMinutes: phone.totalIncomingMinutes,
+        lastIncomingCall: phone.lastIncomingCall
+      },
+      recentCalls: phone.incomingCalls || []
+    }));
+
+    res.json({
+      success: true,
+      phoneNumbers: formattedNumbers,
+      defaultCallerId: user?.defaultCallerId || null,
+      total: formattedNumbers.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching phone numbers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch phone numbers'
+    });
+  }
+});
+
+// 获取可购买的号码列表（从Twilio）
+router.get('/available', auth, async (req, res) => {
+  try {
+    const { countryCode = 'US', areaCode, contains } = req.query;
+    
+    // 只允许美国和加拿大
+    if (!['US', 'CA'].includes(countryCode)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone numbers are only available for US and Canada'
+      });
+    }
+    
+    // 模拟数据 - 在生产环境中应该调用Twilio API
+    if (process.env.NODE_ENV === 'development' || !twilioClient) {
+      // 生成模拟的可用号码
+      const mockNumbers = [];
+      for (let i = 0; i < 10; i++) {
+        const areaCodePrefix = areaCode || '555';
+        const randomSuffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        const randomMiddle = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+        const phoneNumber = `+1${areaCodePrefix}${randomMiddle}${randomSuffix}`;
+        
+        // 使用地理位置工具获取位置信息
+        const locationInfo = getPhoneNumberLocation(phoneNumber);
+        
+        mockNumbers.push({
+          phoneNumber,
+          friendlyName: `(${areaCodePrefix}) ${randomMiddle}-${randomSuffix}`,
+          locality: locationInfo.locality,
+          region: locationInfo.region,
+          isoCountry: locationInfo.isoCountry,
+          capabilities: {
+            voice: true,
+            sms: true,
+            mms: false,
+            fax: false
+          },
+          monthlyFee: 2.00,
+          setupFee: 0.00
+        });
+      }
+      
+      return res.json({
+        success: true,
+        availableNumbers: mockNumbers,
+        total: mockNumbers.length
+      });
+    }
+
+    // 实际的Twilio API调用
+    const searchParams = {
+      countryCode,
+      limit: 20
+    };
+    
+    if (areaCode) {
+      searchParams.areaCode = areaCode;
+    }
+    
+    if (contains) {
+      searchParams.contains = contains;
+    }
+
+    const availableNumbers = await twilioClient.availablePhoneNumbers(countryCode)
+      .local
+      .list(searchParams);
+
+    const formattedNumbers = availableNumbers.map(number => ({
+      phoneNumber: number.phoneNumber,
+      friendlyName: number.friendlyName,
+      locality: number.locality,
+      region: number.region,
+      isoCountry: number.isoCountry,
+      capabilities: number.capabilities,
+      monthlyFee: 2.00, // 更新费率
+      setupFee: 0.00
+    }));
+
+    res.json({
+      success: true,
+      availableNumbers: formattedNumbers,
+      total: formattedNumbers.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching available numbers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available numbers'
+    });
+  }
+});
+
+// 购买电话号码
+router.post('/purchase', auth, async (req, res) => {
+  try {
+    const { phoneNumber, callerIdName } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required'
+      });
+    }
+
+    // 检查用户余额
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    const setupFee = 0.00;
+    const monthlyFee = 2.00;
+    
+    if (user.balance < setupFee + monthlyFee) {
+      return res.status(400).json({
+        success: false,
+        message: 'Insufficient balance. Please add credits.'
+      });
+    }
+
+    // 检查号码是否已被购买
+    const existingNumber = await UserPhoneNumber.findOne({
+      where: { phoneNumber }
+    });
+
+    if (existingNumber) {
+      return res.status(409).json({
+        success: false,
+        message: 'This phone number is already taken'
+      });
+    }
+
+    let twilioSid = null;
+    
+    // 模拟购买 - 在开发环境中或Twilio未配置时
+    if (process.env.NODE_ENV === 'development' || !twilioClient) {
+      console.log('Development mode: Simulating phone number purchase');
+      twilioSid = `PN${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
+    } else {
+      try {
+        // 实际从Twilio购买号码
+        const purchasedNumber = await twilioClient.incomingPhoneNumbers.create({
+          phoneNumber: phoneNumber,
+          voiceUrl: `${process.env.APP_URL || process.env.BASE_URL || 'https://ubophone.com'}/api/incoming-calls/webhook/voice`,
+          voiceMethod: 'POST',
+          statusCallback: `${process.env.APP_URL || process.env.BASE_URL || 'https://ubophone.com'}/api/incoming-calls/webhook/dial-status`,
+          statusCallbackMethod: 'POST'
+        });
+        
+        twilioSid = purchasedNumber.sid;
+      } catch (twilioError) {
+        console.error('Twilio purchase error:', twilioError);
+        return res.status(400).json({
+          success: false,
+          message: `Failed to purchase number: ${twilioError.message}`
+        });
+      }
+    }
+
+    // 获取电话号码的地理位置信息
+    const locationInfo = getPhoneNumberLocation(phoneNumber);
+    
+    // 在数据库中创建记录
+    const userPhoneNumber = await UserPhoneNumber.create({
+      userId: req.user.userId,
+      phoneNumber,
+      type: 'dedicated',
+      status: 'active',
+      twilioSid,
+      locality: locationInfo.locality,
+      region: locationInfo.region,
+      isoCountry: locationInfo.isoCountry,
+      callerIdName: callerIdName || `${user.firstName || user.username}'s Phone`,
+      monthlyFee,
+      setupFee,
+      purchaseDate: new Date()
+    });
+
+    // 扣除费用
+    const totalCost = setupFee + monthlyFee;
+    await user.update({
+      balance: parseFloat(user.balance) - totalCost
+    });
+
+    // 格式化响应
+    const responseData = {
+      id: userPhoneNumber.id,
+      phoneNumber: userPhoneNumber.phoneNumber,
+      callerIdName: userPhoneNumber.callerIdName,
+      type: userPhoneNumber.type,
+      status: userPhoneNumber.status,
+      monthlyFee: parseFloat(userPhoneNumber.monthlyFee),
+      setupFee: parseFloat(userPhoneNumber.setupFee),
+      purchaseDate: userPhoneNumber.purchaseDate,
+      remainingBalance: parseFloat(user.balance)
+    };
+
+    res.json({
+      success: true,
+      phoneNumber: responseData,
+      message: `Phone number ${phoneNumber} purchased successfully`,
+      totalCost
+    });
+
+  } catch (error) {
+    console.error('Error purchasing phone number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to purchase phone number'
+    });
+  }
+});
+
+// 更新电话号码设置
+router.put('/:id/settings', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      callerIdName,
+      forwardingEnabled,
+      forwardingNumber,
+      voicemailEnabled,
+      autoAnswer,
+      businessHours,
+      customGreeting
+    } = req.body;
+
+    const phoneNumber = await UserPhoneNumber.findOne({
+      where: {
+        id,
+        userId: req.user.userId
+      }
+    });
+
+    if (!phoneNumber) {
+      return res.status(404).json({
+        success: false,
+        message: 'Phone number not found'
+      });
+    }
+
+    // 更新设置
+    const updateData = {};
+    if (callerIdName !== undefined) updateData.callerIdName = callerIdName;
+    if (forwardingEnabled !== undefined) updateData.forwardingEnabled = forwardingEnabled;
+    if (forwardingNumber !== undefined) updateData.forwardingNumber = forwardingNumber;
+    if (voicemailEnabled !== undefined) updateData.voicemailEnabled = voicemailEnabled;
+    if (autoAnswer !== undefined) updateData.autoAnswer = autoAnswer;
+    if (businessHours !== undefined) updateData.businessHours = businessHours;
+    if (customGreeting !== undefined) updateData.customGreeting = customGreeting;
+
+    await phoneNumber.update(updateData);
+
+    res.json({
+      success: true,
+      phoneNumber: {
+        id: phoneNumber.id,
+        phoneNumber: phoneNumber.phoneNumber,
+        callerIdName: phoneNumber.callerIdName,
+        settings: {
+          forwardingEnabled: phoneNumber.forwardingEnabled,
+          forwardingNumber: phoneNumber.forwardingNumber,
+          voicemailEnabled: phoneNumber.voicemailEnabled,
+          autoAnswer: phoneNumber.autoAnswer,
+          businessHours: phoneNumber.businessHours,
+          customGreeting: phoneNumber.customGreeting
+        }
+      },
+      message: 'Settings updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Error updating phone number settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update settings'
+    });
+  }
+});
+
+// 🔧 更新来电处理设置
+router.put('/:id/incoming-settings', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      incomingCallMode,
+      forwardingEnabled,
+      forwardingNumber
+    } = req.body;
+
+    const phoneNumber = await UserPhoneNumber.findOne({
+      where: {
+        id,
+        userId: req.user.userId
+      }
+    });
+
+    if (!phoneNumber) {
+      return res.status(404).json({
+        success: false,
+        message: 'Phone number not found'
+      });
+    }
+
+    // 验证输入数据
+    if (incomingCallMode && !['forward', 'browser'].includes(incomingCallMode)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid incoming call mode. Must be "forward" or "browser"'
+      });
+    }
+
+    if (incomingCallMode === 'forward' && forwardingEnabled && !forwardingNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'Forwarding number is required when forwarding is enabled'
+      });
+    }
+
+    // 构建更新数据
+    const updateData = {};
+    if (forwardingEnabled !== undefined) updateData.forwardingEnabled = forwardingEnabled;
+    if (forwardingNumber !== undefined) updateData.forwardingNumber = forwardingNumber;
+
+    // 根据模式设置相应的字段
+    if (incomingCallMode === 'forward') {
+      updateData.forwardingEnabled = true;
+      updateData.forwardingNumber = forwardingNumber;
+    } else if (incomingCallMode === 'browser') {
+      updateData.forwardingEnabled = false;
+      updateData.forwardingNumber = null;
+    }
+
+    await phoneNumber.update(updateData);
+
+    console.log(`📞 Updated incoming call settings for ${phoneNumber.phoneNumber}:`, {
+      mode: incomingCallMode,
+      forwardingEnabled: updateData.forwardingEnabled,
+      forwardingNumber: updateData.forwardingNumber
+    });
+
+    res.json({
+      success: true,
+      phoneNumber: {
+        id: phoneNumber.id,
+        phoneNumber: phoneNumber.phoneNumber,
+        settings: {
+          forwardingEnabled: phoneNumber.forwardingEnabled,
+          forwardingNumber: phoneNumber.forwardingNumber,
+          voicemailEnabled: phoneNumber.voicemailEnabled,
+          autoAnswer: phoneNumber.autoAnswer,
+          businessHours: phoneNumber.businessHours,
+          customGreeting: phoneNumber.customGreeting
+        }
+      },
+      message: 'Incoming call settings updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Error updating incoming call settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update incoming call settings'
+    });
+  }
+});
+
+// 删除/释放电话号码
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const phoneNumber = await UserPhoneNumber.findOne({
+      where: {
+        id,
+        userId: req.user.userId
+      }
+    });
+
+    if (!phoneNumber) {
+      return res.status(404).json({
+        success: false,
+        message: 'Phone number not found'
+      });
+    }
+
+    // 在生产环境中释放Twilio号码
+    if (phoneNumber.twilioSid && twilioClient && process.env.NODE_ENV !== 'development') {
+      try {
+        await twilioClient.incomingPhoneNumbers(phoneNumber.twilioSid).remove();
+      } catch (twilioError) {
+        console.error('Failed to release Twilio number:', twilioError);
+        // 即使Twilio释放失败，也继续删除数据库记录
+      }
+    }
+
+    // 将状态设为 inactive 而不是直接删除（保留历史记录）
+    await phoneNumber.update({
+      status: 'inactive',
+      expiryDate: new Date()
+    });
+
+    res.json({
+      success: true,
+      message: `Phone number ${phoneNumber.phoneNumber} has been released`
+    });
+
+  } catch (error) {
+    console.error('Error releasing phone number:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to release phone number'
+    });
+  }
+});
+
+// 获取号码的来电历史
+router.get('/:id/incoming-calls', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { page = 1, limit = 20, status } = req.query;
+    const offset = (page - 1) * limit;
+
+    const phoneNumber = await UserPhoneNumber.findOne({
+      where: {
+        id,
+        userId: req.user.userId
+      }
+    });
+
+    if (!phoneNumber) {
+      return res.status(404).json({
+        success: false,
+        message: 'Phone number not found'
+      });
+    }
+
+    const whereClause = {
+      userPhoneNumberId: id
+    };
+
+    if (status) {
+      whereClause.status = status;
+    }
+
+    const calls = await IncomingCall.findAndCountAll({
+      where: whereClause,
+      order: [['startTime', 'DESC']],
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      attributes: [
+        'id', 'callSid', 'fromNumber', 'status', 'startTime', 
+        'answerTime', 'endTime', 'duration', 'handledBy',
+        'hasRecording', 'hasVoicemail', 'isSpam', 'userNotes'
+      ]
+    });
+
+    res.json({
+      success: true,
+      phoneNumber: phoneNumber.phoneNumber,
+      calls: calls.rows,
+      pagination: {
+        total: calls.count,
+        totalPages: Math.ceil(calls.count / limit),
+        currentPage: parseInt(page),
+        limit: parseInt(limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching incoming calls:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch incoming calls'
+    });
+  }
+});
+
+// 设置默认来电显示号码
+router.post('/default-caller-id', auth, async (req, res) => {
+  try {
+    const { phoneNumberId } = req.body;
+
+    // 获取用户
+    const user = await User.findByPk(req.user.userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // 如果设置为null，表示清除默认来电显示
+    if (phoneNumberId === null) {
+      // 清除用户的默认来电显示设置
+      await user.update({ defaultCallerId: null });
+      
+      // 将该用户的所有号码的isDefaultCallerId设为false
+      await UserPhoneNumber.update(
+        { isDefaultCallerId: false },
+        { where: { userId: req.user.userId } }
+      );
+      
+      return res.json({
+        success: true,
+        defaultCallerId: null,
+        message: 'Default caller ID removed'
+      });
+    }
+
+    // 验证电话号码是否属于该用户
+    const phoneNumber = await UserPhoneNumber.findOne({
+      where: {
+        id: phoneNumberId,
+        userId: req.user.userId,
+        status: 'active' // 只有活跃的号码才能设为默认
+      }
+    });
+
+    if (!phoneNumber) {
+      return res.status(404).json({
+        success: false,
+        message: 'Phone number not found or not active'
+      });
+    }
+
+    // 🔄 同步更新两种方案：
+    // 方案1：更新users表的defaultCallerId字段
+    await user.update({ defaultCallerId: phoneNumberId });
+    
+    // 方案2：更新user_phone_numbers表的布尔字段
+    // 先将该用户的所有号码设为非默认
+    await UserPhoneNumber.update(
+      { isDefaultCallerId: false },
+      { where: { userId: req.user.userId } }
+    );
+    
+    // 然后将选中的号码设为默认
+    await UserPhoneNumber.update(
+      { isDefaultCallerId: true },
+      { where: { id: phoneNumberId, userId: req.user.userId } }
+    );
+
+    res.json({
+      success: true,
+      defaultCallerId: phoneNumberId,
+      phoneNumber: phoneNumber.phoneNumber,
+      message: `Default caller ID set to ${phoneNumber.phoneNumber}`
+    });
+
+  } catch (error) {
+    console.error('Error setting default caller ID:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to set default caller ID'
+    });
+  }
+});
+
+module.exports = router;

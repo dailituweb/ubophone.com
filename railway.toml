@@ -1,0 +1,21 @@
+[build]
+# 使用 Nixpacks 构建 (默认)
+# 
+# 方式一：使用构建脚本（推荐）
+buildCommand = "./railway-build.sh"
+#
+# 方式二：使用内联命令（备选方案）
+# buildCommand = "cd client && npm ci --legacy-peer-deps && npm run build && cd .. && npm ci --only=production --legacy-peer-deps"
+#
+watchPatterns = ["**"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[[services]]
+# 切到后端目录并启动
+startCommand = "cd server && npm start"
+
+[environments.production]
+variables = { NODE_ENV = "production", PORT = "5001" } 

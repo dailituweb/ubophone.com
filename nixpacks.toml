@@ -1,0 +1,46 @@
+[variables]
+NODE_ENV = "production"
+
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "npm-9_x"]
+
+[phases.install]
+cmd = "npm install --legacy-peer-deps"
+
+[phases.build]
+# 修复的构建命令 - 确保在client目录下正确构建
+cmd = "cd client && npm ci --legacy-peer-deps && npm run build && cd .."
+
+[start]
+cmd = "npm start"
+
+# =============================================================================
+# Nixpacks 替代配置说明：
+# 
+# 如果不想使用 Docker，可以在 Railway Dashboard 中：
+# 1. 选择 "Nixpacks (Default)" 构建器
+# 2. 使用此配置进行构建
+# 
+# 关键修复：
+# - cd client && npm ci && npm run build - 在正确目录下构建前端
+# - --legacy-peer-deps 解决依赖冲突
+# - 确保构建完成后返回根目录
+# 
+# 验证步骤：
+# - 本地运行: cd client && npm ci && npm run build
+# - 确认 client/build 目录成功生成
+# =============================================================================
+
+[build]
+buildCommand = "./railway-build.sh"
+watchPatterns = ["**"]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[environments.production]
+variables = { NODE_ENV = "production", PORT = "5001" }
+
+[[services]]
+startCommand = "cd server && npm start" 

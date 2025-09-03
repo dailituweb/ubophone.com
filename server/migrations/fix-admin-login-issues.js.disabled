@@ -1,0 +1,88 @@
+/**
+ * 修复管理员登录相关的数据库问题
+ * 
+ * 问题1: admin_sessions 表的 token 和 refreshToken 字段长度不足
+ * 问题2: admin_audit_logs 表的 adminId 字段不允许 null，但登录失败时需要记录匿名审计日志
+ */
+
+const { QueryInterface, DataTypes } = require('sequelize');
+
+module.exports = {
+  up: async (queryInterface, Sequelize) => {
+    console.log('🔧 开始修复管理员登录相关数据库问题...');
+    
+    try {
+      // 修复1: 扩展 admin_sessions 表的 token 字段长度
+      console.log('📝 修复 admin_sessions 表的 token 字段长度...');
+      
+      await queryInterface.changeColumn('admin_sessions', 'token', {
+        type: DataTypes.TEXT,
+        allowNull: false,
+        unique: true
+      });
+      
+      await queryInterface.changeColumn('admin_sessions', 'refreshToken', {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        unique: true
+      });
+      
+      console.log('✅ admin_sessions 表字段长度修复完成');
+      
+      // 修复2: 允许 admin_audit_logs 表的 adminId 字段为 null
+      console.log('📝 修复 admin_audit_logs 表的 adminId 约束...');
+      
+      await queryInterface.changeColumn('admin_audit_logs', 'adminId', {
+        type: DataTypes.UUID,
+        allowNull: true, // 允许为null，支持匿名操作审计
+        references: {
+          model: 'admins',
+          key: 'id'
+        }
+      });
+      
+      console.log('✅ admin_audit_logs 表约束修复完成');
+      
+      console.log('🎉 所有管理员登录相关问题修复完成！');
+      
+    } catch (error) {
+      console.error('❌ 数据库迁移失败:', error);
+      throw error;
+    }
+  },
+
+  down: async (queryInterface, Sequelize) => {
+    console.log('⏪ 回滚管理员登录修复...');
+    
+    try {
+      // 回滚1: 恢复 admin_sessions 表的字段类型
+      await queryInterface.changeColumn('admin_sessions', 'token', {
+        type: DataTypes.STRING,
+        allowNull: false,
+        unique: true
+      });
+      
+      await queryInterface.changeColumn('admin_sessions', 'refreshToken', {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true
+      });
+      
+      // 回滚2: 恢复 admin_audit_logs 表的 adminId 约束
+      await queryInterface.changeColumn('admin_audit_logs', 'adminId', {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+          model: 'admins',
+          key: 'id'
+        }
+      });
+      
+      console.log('✅ 回滚完成');
+      
+    } catch (error) {
+      console.error('❌ 回滚失败:', error);
+      throw error;
+    }
+  }
+}; 

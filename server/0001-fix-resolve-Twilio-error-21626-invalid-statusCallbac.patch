@@ -1,0 +1,172 @@
+From 791934391003e6e605c88aa78436f017345a1bce Mon Sep 17 00:00:00 2001
+From: andybady <lucas@andybadydeMacBook-Pro.local>
+Date: Wed, 30 Jul 2025 09:01:42 +0800
+Subject: [PATCH] fix: resolve Twilio error 21626 - invalid
+ statusCallbackEvents
+
+- Remove conflicting callback events (busy, failed, no-answer, canceled)
+- Keep only core events: initiated, ringing, answered, completed
+- Add webhook connectivity test script for debugging
+- This should resolve Twilio error 21626 for invalid event combinations
+---
+ server/config/twilio.js                     |   4 +-
+ server/scripts/test-webhook-connectivity.js | 131 ++++++++++++++++++++
+ 2 files changed, 133 insertions(+), 2 deletions(-)
+ create mode 100644 server/scripts/test-webhook-connectivity.js
+
+diff --git a/server/config/twilio.js b/server/config/twilio.js
+index 35e3574..64039c9 100644
+--- a/server/config/twilio.js
++++ b/server/config/twilio.js
+@@ -193,9 +193,9 @@ const makeCall = async (from, to, callbackUrl) => {
+       to: to, // 🔧 修复：直接拨打目标号码
+       applicationSid: twimlAppSid, // 🔧 关键修复：使用TwiML应用而不是URL
+       record: false, // 禁用录音以提高稳定性
+-      // 实时质量监控回调
++      // 实时质量监控回调 - 修复事件配置
+       statusCallback: `${baseUrl}/api/twilio/call-status`,
+-      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed', 'busy', 'failed', 'no-answer', 'canceled'],
++      statusCallbackEvent: ['initiated', 'ringing', 'answered', 'completed'],
+       statusCallbackMethod: 'POST',
+       // 增强音频质量设置
+       machineDetection: 'none', // 完全禁用机器检测
+diff --git a/server/scripts/test-webhook-connectivity.js b/server/scripts/test-webhook-connectivity.js
+new file mode 100644
+index 0000000..db36237
+--- /dev/null
++++ b/server/scripts/test-webhook-connectivity.js
+@@ -0,0 +1,131 @@
++#!/usr/bin/env node
++
++/**
++ * 测试Webhook连接性脚本
++ * 用于验证Twilio是否能够访问我们的webhook端点
++ */
++
++const axios = require('axios');
++
++const BASE_URL = process.env.APP_URL || process.env.BASE_URL || 'https://ubophone.com';
++
++const webhookEndpoints = [
++  '/api/incoming-calls/webhook/voice',
++  '/api/incoming-calls/webhook/dial-status',
++  '/api/twilio/voice',
++  '/api/twilio/dial-status',
++  '/api/twilio/call-status'
++];
++
++async function testWebhookConnectivity() {
++  console.log('🔍 Testing webhook connectivity...');
++  console.log('📍 Base URL:', BASE_URL);
++  console.log('');
++
++  const results = [];
++
++  for (const endpoint of webhookEndpoints) {
++    const url = `${BASE_URL}${endpoint}`;
++    console.log(`Testing: ${url}`);
++    
++    try {
++      // 发送一个简单的POST请求来测试连接性
++      const response = await axios.post(url, {
++        test: true,
++        timestamp: new Date().toISOString()
++      }, {
++        timeout: 10000, // 10秒超时
++        headers: {
++          'Content-Type': 'application/x-www-form-urlencoded',
++          'User-Agent': 'TwilioProxy/1.1'
++        }
++      });
++
++      results.push({
++        endpoint,
++        url,
++        status: 'SUCCESS',
++        statusCode: response.status,
++        responseTime: response.headers['x-response-time'] || 'N/A'
++      });
++
++      console.log(`  ✅ SUCCESS (${response.status})`);
++
++    } catch (error) {
++      let errorMessage = 'Unknown error';
++      let statusCode = 'N/A';
++
++      if (error.response) {
++        statusCode = error.response.status;
++        errorMessage = `HTTP ${error.response.status}`;
++      } else if (error.code === 'ECONNREFUSED') {
++        errorMessage = 'Connection refused';
++      } else if (error.code === 'ENOTFOUND') {
++        errorMessage = 'DNS resolution failed';
++      } else if (error.code === 'ETIMEDOUT') {
++        errorMessage = 'Request timeout';
++      } else {
++        errorMessage = error.message;
++      }
++
++      results.push({
++        endpoint,
++        url,
++        status: 'FAILED',
++        statusCode,
++        error: errorMessage
++      });
++
++      console.log(`  ❌ FAILED (${errorMessage})`);
++    }
++    
++    console.log('');
++  }
++
++  // 输出总结
++  console.log('📊 Test Results Summary:');
++  console.log('========================');
++  
++  const successful = results.filter(r => r.status === 'SUCCESS').length;
++  const failed = results.filter(r => r.status === 'FAILED').length;
++  
++  console.log(`✅ Successful: ${successful}/${results.length}`);
++  console.log(`❌ Failed: ${failed}/${results.length}`);
++  console.log('');
++
++  if (failed > 0) {
++    console.log('❌ Failed endpoints:');
++    results.filter(r => r.status === 'FAILED').forEach(result => {
++      console.log(`  - ${result.endpoint}: ${result.error}`);
++    });
++    console.log('');
++  }
++
++  // 提供修复建议
++  if (failed > 0) {
++    console.log('🔧 Troubleshooting suggestions:');
++    console.log('1. Check if the server is running and accessible');
++    console.log('2. Verify the APP_URL environment variable is correct');
++    console.log('3. Ensure firewall/security groups allow incoming connections');
++    console.log('4. Check if SSL certificate is valid (for HTTPS URLs)');
++    console.log('5. Verify DNS resolution for the domain');
++  } else {
++    console.log('🎉 All webhook endpoints are accessible!');
++  }
++
++  return results;
++}
++
++// 如果直接运行此脚本
++if (require.main === module) {
++  testWebhookConnectivity()
++    .then(() => {
++      process.exit(0);
++    })
++    .catch(error => {
++      console.error('❌ Test script failed:', error);
++      process.exit(1);
++    });
++}
++
++module.exports = { testWebhookConnectivity };
+-- 
+2.39.5 (Apple Git-154)
+
